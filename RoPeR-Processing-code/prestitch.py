@@ -1,5 +1,4 @@
 import numpy as np
-from scipy.fft import fft, ifft, fftfreq
 import matplotlib.pyplot as plt
 
 observable_depth_ns = 1400

@@ -154,3 +154,12 @@ def NMO_correction(data, eps_r, t_0, x_0, region_shape, dx, dt):
         
     return NMO_corrected_data
 
+
+def fit_hyperbola(data, num_hyperbolas, method):
+    if method not in ['fit', 'frequency', 'other']:
+        raise Exception(f'{method} not an allowed method')
+
+    
+
+
+    retunr None

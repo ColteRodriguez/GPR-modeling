@@ -159,7 +159,12 @@ def fit_hyperbola(data, num_hyperbolas, method):
     if method not in ['fit', 'frequency', 'other']:
         raise Exception(f'{method} not an allowed method')
 
-    
+    if method == 'fit':
+        # do something
+
+    # Lets just go thtough and get the time index of the highest magnitude frequency
+    t_points = data.argmax(axis=1)
+    x_points = np.arange(0, data.shape[1])
 
 
     retunr None

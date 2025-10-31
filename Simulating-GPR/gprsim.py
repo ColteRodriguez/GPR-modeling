@@ -225,17 +225,21 @@ def fit_hyperbola(data, num_hyperbolas, method, dx, dt):
         A = np.column_stack([t**2, 2.0*x, -1.0*np.ones_like(x)])
         b = x**2
         
-        # solve with pseudoinverse
+        # solve with pseudoinverse -- do this twice to reduce outliers
         consts = np.linalg.pinv(A) @ b
-        alpha, beta, gamma = consts
-        print(consts)
-
+        r = A@consts - b  
+        sigma = 1.5 * np.median(np.abs(r - np.median(r))) # scale mad
+        mask = np.abs(r) <= 1 * sigma
+        consts2 = np.linalg.pinv(A[mask]) @ b[mask]
+        print(consts2)
+        alpha, beta, gamma = consts2
+        
         v = 2.0 * np.sqrt(alpha) * 1e9
         x0 = beta
         z = np.sqrt(gamma - x0**2)
         t0 = z/v
 
-        print(f"v = {v:.1f} m/s, depth z = {z:.2f} m, apex x0 = {x0:.3f} m, t0 = {t0} s")
+        print(f"v = {v:.1f} m/s, depth z = {z:.2f} m, apex x0 = {x0:.3f} m, t0 = {t0} s, risiduals={r}")
         return v, z, x0, t0
 
     return None

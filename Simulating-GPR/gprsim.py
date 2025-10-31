@@ -153,7 +153,41 @@ def NMO_correction(data, eps_r, t_0, x_0, region_shape, dx, dt):
         
     return NMO_corrected_data
 
+"""
+    Estimates the hyperbola from a given input radargram simulation and returns the hyperbola defining constants x0 and t0 reflector positions and the medium veolicty avobe the reflector
 
+    Parameters
+    ----------
+    data : ndarray of shape (nt, nx)
+        Simulated radargram matrix where:
+        - Rows represent time samples.
+        - Columns represent antenna positions along the surface (traces). 
+        
+    eps_r : float
+        Relative permittivity (dielectric) of the medium.
+
+    num_hyperbolas: int
+        Number of hyperbolas to locate. Currently onlt 1 is suported
+        
+    method : string
+        data fitting method to determine hyperbola:  NEED TO UPDATE THESE TO ACTUALLY MAKE SENSE
+        - fit_from_max : use np.polyfit on the maximum signal in each trace
+        - robust_fit : Linear least squares using the pseudoinverse
+    
+    dt : float
+        Sampling interval [s].
+    
+    dx : float
+        Spatial sampling interval (antenna step size) [m].
+
+    Returns
+    -------
+    v : velocity model in m/s
+    z : reflector depth in m
+    x0 : zero-offset trace
+    t0 : one-way travel time of the reflector at depth z
+
+    """
 def fit_hyperbola(data, num_hyperbolas, method, dx, dt):
     if method not in ['fit_from_max', 'faster_fit', 'robust_fit']:
         raise Exception(f'{method} not an allowed method')
@@ -167,7 +201,7 @@ def fit_hyperbola(data, num_hyperbolas, method, dx, dt):
         # getting these points is essential for this method -- otherwise it fails
         apex = np.argmin(t_points)
         x0 = x_points[apex] # [m]
-        t0 = t_points[apex] # [s]
+        t0 = t_points[apex]/2 # [s]
         
         # linear reg of t^2 vs (x-x0)^2
         x_offset_term = (x_points - x0)**2
@@ -179,13 +213,29 @@ def fit_hyperbola(data, num_hyperbolas, method, dx, dt):
         z = v * np.sqrt(int) / 2.0    # depth (m)
         
         print(f"v = {v:.1f} m/s, depth z = {z:.2f} m, apex x0 = {x0:.3f} m, t0 = {t0} s")
-
-    # # I think the c guess and optimization problem is interesting, but I fear it will be slow and innacurate
-    # if method=='faster_fit':
+        return v, z, x0, t0
         
+    # Actually better than np.polyfit for noisy data
+    if method=='robust_fit':
+        # Just take the max, if some are wrong due to noise our alg will work it out
+        t = data.argmax(axis=0)* -1 # There are some issues here, will fix later
+        x = np.arange(0, data.shape[1]) * dx # 
 
-    # # This is almost identical to what np.polyfit does but I wanted to implement it. Just use the pseudoinverse to obtain noise-resistant least squares solution
-    # if method=='robust_fit':
+        # Our linearized form of the hyperbola equation
+        A = np.column_stack([t**2, 2.0*x, -1.0*np.ones_like(x)])
+        b = x**2
+        
+        # solve with pseudoinverse
+        consts = np.linalg.pinv(A) @ b
+        alpha, beta, gamma = consts
+        print(consts)
 
+        v = 2.0 * np.sqrt(alpha) * 1e9
+        x0 = beta
+        z = np.sqrt(gamma - x0**2)
+        t0 = z/v
+
+        print(f"v = {v:.1f} m/s, depth z = {z:.2f} m, apex x0 = {x0:.3f} m, t0 = {t0} s")
+        return v, z, x0, t0
 
     return None

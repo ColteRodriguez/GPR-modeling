@@ -141,7 +141,6 @@ def NMO_correction(data, eps_r, t_0, x_0, region_shape, dx, dt):
     v = (c/np.sqrt(eps_r))/1e9         # [ns]
     
     NMO_corrected_data = np.zeros_like(data)
-    
     nt, nx = data.shape
     for x in range(nx):
         x_offset = np.abs((x*dx) - x_0)
@@ -155,16 +154,38 @@ def NMO_correction(data, eps_r, t_0, x_0, region_shape, dx, dt):
     return NMO_corrected_data
 
 
-# def fit_hyperbola(data, num_hyperbolas, method):
-#     if method not in ['fit', 'frequency', 'other']:
-#         raise Exception(f'{method} not an allowed method')
+def fit_hyperbola(data, num_hyperbolas, method, dx, dt):
+    if method not in ['fit_from_max', 'faster_fit', 'robust_fit']:
+        raise Exception(f'{method} not an allowed method')
 
-#     if method == 'fit':
-#         # do something
+    # Option one. SImple, but requires handholding (really nice input)
+    if method == 'fit_from_max': 
+        # Option 1: Lets just go through and get the time index of the highest magnitude frequency then fit a hyperbola
+        t_points = data.argmax(axis=0) * dt # [ns] --> [s]
+        x_points = np.arange(0, data.shape[1]) * dx # m
 
-#     # Lets just go thtough and get the time index of the highest magnitude frequency
-#     t_points = data.argmax(axis=1)
-#     x_points = np.arange(0, data.shape[1])
+        # getting these points is essential for this method -- otherwise it fails
+        apex = np.argmin(t_points)
+        x0 = x_points[apex] # [m]
+        t0 = t_points[apex] # [s]
+        
+        # linear reg of t^2 vs (x-x0)^2
+        x_offset_term = (x_points - x0)**2
+        t_term = t_points**2
+        # fit y = mx + b, x = x_offset
+        slope, int = np.polyfit(x_offset_term, t_term, 1)  # returns slope, intercept
+        
+        v = 2.0 / np.sqrt(slope)      # subsurface velocity (m/s)
+        z = v * np.sqrt(int) / 2.0    # depth (m)
+        
+        print(f"v = {v:.1f} m/s, depth z = {z:.2f} m, apex x0 = {x0:.3f} m, t0 = {t0} s")
+
+    # # I think the c guess and optimization problem is interesting, but I fear it will be slow and innacurate
+    # if method=='faster_fit':
+        
+
+    # # This is almost identical to what np.polyfit does but I wanted to implement it. Just use the pseudoinverse to obtain noise-resistant least squares solution
+    # if method=='robust_fit':
 
 
-#     retunr None
+    return None

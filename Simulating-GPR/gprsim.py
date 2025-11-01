@@ -229,11 +229,11 @@ def fit_hyperbola(data, num_hyperbolas, method, dx, dt):
         consts = np.linalg.pinv(A) @ b
         r = A@consts - b  
         sigma = 1.5 * np.median(np.abs(r - np.median(r))) # scale mad
-        mask = np.abs(r) <= 1 * sigma
-        consts2 = np.linalg.pinv(A[mask]) @ b[mask]
-        print(consts2)
-        alpha, beta, gamma = consts2
         
+        mask = np.abs(r) <= 0.5 * sigma
+        consts2 = np.linalg.pinv(A[mask]) @ b[mask]
+        alpha, beta, gamma = consts2
+
         v = 2.0 * np.sqrt(alpha) * 1e9
         x0 = beta
         z = np.sqrt(gamma - x0**2)

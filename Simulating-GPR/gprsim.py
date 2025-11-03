@@ -153,6 +153,31 @@ def NMO_correction(data, eps_r, t_0, x_0, region_shape, dx, dt):
         
     return NMO_corrected_data
 
+def smooth_path_dp(data, lam):
+    nt, nx = data.shape
+    C = np.zeros_like(data)
+    backtrack = np.zeros_like(data, dtype=int)
+
+    # Initialize first column
+    C[:, 0] = data[:, 0]
+
+    # DP forward pass, populate the memoized cost (C) and store the best path so far. This can be improved from n^2 but I thnk it's alright for now
+    for x in range(1, nx):
+        for t in range(nt):
+            # Compute smoothness penalty relative to previous column, slope cost may not be needed
+            penalties = C[:, x-1] - lam * (np.arange(nt) - t)**2
+            best_prev = np.argmax(penalties)
+            C[t, x] = data[t, x] + penalties[best_prev]
+            backtrack[t, x] = best_prev
+
+    # Backtrack the best path
+    path = np.zeros(nx, dtype=int)
+    path[-1] = np.argmax(C[:, -1])
+    for x in range(nx-2, -1, -1):
+        path[x] = backtrack[path[x+1], x+1]
+
+    return np.arange(0, nx), -path
+    
 """
     Estimates the hyperbola from a given input radargram simulation and returns the hyperbola defining constants x0 and t0 reflector positions and the medium veolicty avobe the reflector
 
@@ -218,8 +243,7 @@ def fit_hyperbola(data, num_hyperbolas, method, dx, dt):
     # Actually better than np.polyfit for noisy data
     if method=='robust_fit':
         # Just take the max, if some are wrong due to noise our alg will work it out
-        t = data.argmax(axis=0)* -1 # There are some issues here, will fix later
-        x = np.arange(0, data.shape[1]) * dx # 
+        x, t = smooth_path_dp(data, lam=0.001)
 
         # Our linearized form of the hyperbola equation
         A = np.column_stack([t**2, 2.0*x, -1.0*np.ones_like(x)])

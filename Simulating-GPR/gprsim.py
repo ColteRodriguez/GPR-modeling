@@ -153,31 +153,85 @@ def NMO_correction(data, eps_r, t_0, x_0, region_shape, dx, dt):
         
     return NMO_corrected_data
 
-def smooth_path_dp(data, lam):
-    nt, nx = data.shape
-    C = np.zeros_like(data)
-    backtrack = np.zeros_like(data, dtype=int)
 
-    # Initialize first column
-    C[:, 0] = data[:, 0]
-
-    # DP forward pass, populate the memoized cost (C) and store the best path so far. This can be improved from n^2 but I thnk it's alright for now
-    for x in range(1, nx):
-        for t in range(nt):
-            # Compute smoothness penalty relative to previous column, slope cost may not be needed
-            penalties = C[:, x-1] - lam * (np.arange(nt) - t)**2
-            best_prev = np.argmax(penalties)
-            C[t, x] = data[t, x] + penalties[best_prev]
-            backtrack[t, x] = best_prev
-
-    # Backtrack the best path
-    path = np.zeros(nx, dtype=int)
-    path[-1] = np.argmax(C[:, -1])
-    for x in range(nx-2, -1, -1):
-        path[x] = backtrack[path[x+1], x+1]
-
-    return np.arange(0, nx), -path
+def minimize_tracewise_slope_window(data, n_candidates, dx, window):
+    """
+    Tracewise slope-constrained data preconditioning in noisy 2D data.
     
+    Identifies a continuous path across a noisy 2D array
+    by selecting, for each column (trace), the n-maximum intensity point that
+    minimizes deviation from a locally consistent slope. The algorithm uses a 
+    moving window to estimate the average slope of recentsegments, and choosing
+    the candidate in the next column whose slope best matches this local trend.
+    
+    Parameters
+    ----------
+    data : np.ndarray of shape (n_rows, n_traces)
+        2D array representing signal intensity, where each column corresponds to a
+        spatial or temporal "trace" and each row corresponds to a sampled value (e.g.,
+        depth, time, or vertical position).
+    
+    n_candidates : int
+        Number of top local maxima (by intensity) to consider per column. A higher
+        value increases robustness but also computation time.
+    
+    dx : float
+        Horizontal step size between adjacent traces (used for slope calculation).
+    
+    window : int
+        Number of previous traces to include in the local slope averaging window.
+        Controls how strongly the algorithm enforces slope smoothness.
+    
+    Returns
+    -------
+    x : np.ndarray of shape (n_traces,)
+        The horizontal coordinate values for each trace.
+    
+    path : np.ndarray of shape (n_traces,)
+        The row indices of the selected path through the data, forming a smooth,
+        slope-consistent trace across columns.
+    
+    Notes
+    -----
+    - *See smooth_path_dp* The algorithm performs a greedy minimization of local slope deviation, not a
+      global optimization. For more robust pathfinding in very noisy data, consider
+      extending it with a dynamic programming or cost-accumulation approach. 
+    - The function assumes that larger values in `data` correspond to more likely
+      "signal" locations (i.e., bright ridges or maxima).
+    - The algorithm requires the the 1-max (the maximum) of the first two traces to fall on the hyperbola (becasue the alg is locally greedy, this is a major pitfall -- 
+      leading to a runaway steep-slope path.
+    """
+    n_traces = data.shape[1]
+    x = np.arange(n_traces) * dx
+
+    # Precompute top-n candidate indices for each column
+    sorted_indices = np.argsort(data, axis=0)[::-1, :]
+    candidates = sorted_indices[:n_candidates, :].T  # shape (n_traces, n_candidates)
+
+    # Initialize path with top candidate of first two columns
+    path = np.zeros(n_traces, dtype=int)
+    path[0] = candidates[0, 0]
+    path[1] = candidates[1, 0]
+
+    # Iterate through columns
+    for i in range(2, n_traces):
+        # Adjust window near beginning
+        w = min(window, i)
+
+        # Compute mean slope of recent steps
+        local_trends = [path[i-j] - path[i-j-1] for j in range(1, w)]
+        local_trend_mean = np.mean(local_trends) / dx
+
+        trace_candidates = candidates[i]
+        slope_diff = ((trace_candidates - path[i-1]) / dx) - local_trend_mean
+
+        min_slope_cand = np.argmin(slope_diff**2)
+        path[i] = trace_candidates[min_slope_cand]
+
+    return x, path
+    
+
+
 """
     Estimates the hyperbola from a given input radargram simulation and returns the hyperbola defining constants x0 and t0 reflector positions and the medium veolicty avobe the reflector
 
@@ -212,7 +266,7 @@ def smooth_path_dp(data, lam):
     x0 : zero-offset trace
     t0 : one-way travel time of the reflector at depth z
 
-    """
+"""
 def fit_hyperbola(data, num_hyperbolas, method, dx, dt):
     if method not in ['fit_from_max', 'faster_fit', 'robust_fit']:
         raise Exception(f'{method} not an allowed method')

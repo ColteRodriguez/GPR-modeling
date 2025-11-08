@@ -1,5 +1,7 @@
 import numpy as np
 import math
+import matplotlib.pyplot as plt
+from colorama import Fore
 
 def gprsim(eps_r, rf, dt, dx, reflectors, region_shape, wavetype, SNR):
     """
@@ -267,6 +269,124 @@ def minimize_tracewise_slope_window(data, n_candidates, dx, window):
     t0 : one-way travel time of the reflector at depth z
 
 """
+
+def smooth_path_dp(data, dx, lam):
+    """
+    Dynamic programming path extraction with slope smoothness constraint.
+
+    This function identifies a globally optimal path through a 2D data array
+    (e.g., a noisy image or trace stack) by maximizing signal intensity while
+    enforcing slope continuity between adjacent columns. It uses dynamic
+    programming to accumulate an optimal cost matrix `C`, balancing the
+    contribution of local intensity and smoothness between consecutive points.
+    The final path is then reconstructed by backtracking from the maximum
+    cumulative cost.
+
+    Parameters
+    ----------
+    data : np.ndarray of shape (nt, nx)
+        2D array representing the signal intensity field. Each column corresponds
+        to a spatial or temporal "trace", and each row represents a vertical or
+        temporal sample (e.g., depth or time). The algorithm finds a continuous
+        high-intensity ridge across columns.
+    
+    lam : float
+        Smoothness weighting factor (0 ≤ lam ≤ 1). Higher values increase the
+        penalty on large vertical jumps between adjacent columns, promoting smoother
+        paths; lower values emphasize following strong intensity values even if the
+        path is jagged.
+
+    Returns
+    -------
+    x : np.ndarray of shape (nx,)
+        Column indices corresponding to each trace position.
+    
+    path : np.ndarray of shape (nx,)
+        Row indices of the optimal path through the data, reconstructed from
+        backtracking the maximum cumulative cost.
+    
+    C : np.ndarray of shape (nt, nx)
+        Accumulated cost matrix representing the maximum achievable cumulative
+        score up to each point (t, x) in the grid.
+    
+    backtrack : np.ndarray of shape (nt, nx)
+        Index matrix storing the best predecessor for each (t, x), used to recover
+        the final optimal path during backtracking.
+
+    Notes
+    -----
+    - The dynamic programming formulation implicitly accounts for multi-column
+      (global) slope trends since each column’s optimal cost includes all previous
+      transitions. Thus, even though the local slope penalty is evaluated only
+      against the immediate previous column, the optimization captures consistent
+      longer-term slope behavior.
+    - The computational complexity is O(nt² × nx), which can be reduced by
+      restricting the allowed vertical transition range between columns.
+    """
+    nt, nx = data.shape
+    C = np.zeros_like(data)
+    backtrack = np.zeros_like(data, dtype=int)
+
+    # Initialize first column
+    C[:, 0] = data[:, 0]
+
+    # DP forward pass, populate the memoized cost (C) and store the best path so far. This can be improved from n^2 but I thnk it's alright for now
+    for x in range(1, nx):
+        for t in range(nt):
+            # Compute smoothness penalty relative to previous column, slope cost may not be needed
+            penalties = ((1-lam)*C[:, x-1]) - (lam * (np.arange(nt) - t)**2)
+            best_prev = np.argmax(penalties)
+            C[t, x] = data[t, x] + penalties[best_prev]
+            backtrack[t, x] = best_prev
+    # Backtrack the best path
+    path = np.zeros(nx, dtype=int)
+    path[-1] = np.argmax(C[:, -1])
+    for x in range(nx-2, -1, -1):
+        path[x] = backtrack[path[x+1], x+1]
+
+    return np.arange(0, nx), -path, C, backtrack
+
+def visualize_preconditioning():
+    fig, ax = plt.subplots(3, 3, figsize=(18,15))
+    
+    for SNR, i in zip([0.1, 0.05, 0.01], range(0,3)):
+        # Parameters
+        eps_r = 3                  # relative dielectric permittivity
+        rf = 400e6                 # radar frequency different from pulse frequency
+        dt = 1e-9                  # seconds
+        dx = 1                     # meters
+        region_shape = (70, 1e-6)  # grid (x,z)
+        wavetype = 'gaussian'
+        
+        # Point reflectors at (x,t) where x [m] and t [s]
+        reflectors = [(35, 50e-9)]
+        
+        data, x_positions, t_samples = gprsim(eps_r, rf, dt, dx, reflectors, region_shape, wavetype, SNR)
+        
+        im = ax[i][0].imshow(data, aspect='auto', cmap='seismic')
+        if i == 2:
+            ax[i][0].set_xlabel("Antenna position (m)")
+        ax[i][0].set_ylabel("Time (ns)")
+        ax[i][0].set_title(f"Simulated Radargram: SNR={SNR}")
+        cbar = fig.colorbar(im, label="Amplitude")
+        
+        t, x = data.argsort(axis=0)[::-1,:][0], np.arange(0, data.shape[1]) * dx 
+        x_window, t_window = minimize_tracewise_slope_window(data, 20, 1, 5)
+        x_greedy, t_greedy = minimize_tracewise_slope_greedy(data, 15, dx)
+        x_dynamic, t_dynamic, c, b = smooth_path_dp(data, dx, lam=0.001)
+        
+        ax[i][1].set_title(f"Data Preconditioning Using n-max Signals SNR={SNR}")
+        im1 = ax[i][1].imshow(data, aspect='auto', extent=[0,70,-1000,0], cmap='seismic')
+        ax[i][1].scatter(x, -t, label="Max signal at each trace")
+        ax[i][1].plot(x_window, -t_window, label="informed greedy", c='black', linestyle='-')
+        ax[i][1].plot(x_greedy, -t_greedy, label="simple greedy", c='black', linestyle='--')
+        ax[i][1].plot(x_dynamic, t_dynamic, label="memoized cost", c='black', linestyle=':')
+        ax[i][1].legend(loc="lower right")
+    
+    
+        im2 = ax[i][2].imshow((c-c.min(axis=0))/(c.max(axis=0)-c.min(axis=0)), aspect='auto')
+        ax[i][2].set_title("Normalized Score Matrix (memoized cost method \n -- accounting for slope and intensity)")
+    
 def fit_hyperbola(data, num_hyperbolas, method, dx, dt):
     if method not in ['fit_from_max', 'faster_fit', 'robust_fit']:
         raise Exception(f'{method} not an allowed method')
@@ -297,7 +417,7 @@ def fit_hyperbola(data, num_hyperbolas, method, dx, dt):
     # Actually better than np.polyfit for noisy data
     if method=='robust_fit':
         # Just take the max, if some are wrong due to noise our alg will work it out
-        x, t = smooth_path_dp(data, lam=0.001)
+        x, t, c, b = smooth_path_dp(data, dx, lam=0.001)
 
         # Our linearized form of the hyperbola equation
         A = np.column_stack([t**2, 2.0*x, -1.0*np.ones_like(x)])
@@ -311,13 +431,36 @@ def fit_hyperbola(data, num_hyperbolas, method, dx, dt):
         mask = np.abs(r) <= 0.5 * sigma
         consts2 = np.linalg.pinv(A[mask]) @ b[mask]
         alpha, beta, gamma = consts2
+        
+        if alpha < 0 or (gamma - beta**2) < 0:
+            print(Fore.RED + "Caught invalud value in sqrt: can not calculate hyperbola parameters from pinv. Switching to np.polyfit to avoid distruption. If np.polyfit quits, the input data may be too noisy")
+            return fit_hyperbola(c, num_hyperbolas, 'fit_from_max', dx, dt)
+        else:
+            v = 2.0 * np.sqrt(alpha) * 1e9
+            x0 = beta
+            z = np.sqrt(gamma - x0**2)
+            t0 = z/v
 
-        v = 2.0 * np.sqrt(alpha) * 1e9
-        x0 = beta
-        z = np.sqrt(gamma - x0**2)
-        t0 = z/v
-
-        print(f"v = {v:.1f} m/s, depth z = {z:.2f} m, apex x0 = {x0:.3f} m, t0 = {t0} s, risiduals={r}")
+        # print(f"v = {v:.1f} m/s, depth z = {z:.2f} m, apex x0 = {x0:.3f} m, t0 = {t0} s, risiduals={r}")
         return v, z, x0, t0
 
     return None
+
+def minimize_tracewise_slope_greedy(data, n_candidates, dx):
+    t = data.argsort(axis=0)[::-1,:][0]
+    t_og = data.argsort(axis=0)[::-1,:][0]* -1
+    x = np.arange(0, data.shape[1]) * dx # 
+    t_nmax = data.argsort(axis=0)[::-1,:] * -1
+
+    candidates = np.array([data.argsort(axis=0)[::-1,:][n] for n in range(0,n_candidates)])
+    for i in range(0,len(x)): # go through each trace
+        candidate_indices = candidates[:, i]
+        min_slope = math.inf
+        slopes = []
+        for cand in candidate_indices:
+            slope = np.abs((cand-t[i-1])/(x[i]-x[i-1])) # calcuate the slope for each candidate index
+            slopes.append(slope)
+            if slope < min_slope: # If the slope suddenly becomes eggerdious
+                t[i]=cand
+                min_slope = slope
+    return x, t

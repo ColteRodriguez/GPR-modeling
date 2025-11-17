@@ -233,43 +233,6 @@ def minimize_tracewise_slope_window(data, n_candidates, dx, window):
     return x, path
     
 
-
-"""
-    Estimates the hyperbola from a given input radargram simulation and returns the hyperbola defining constants x0 and t0 reflector positions and the medium veolicty avobe the reflector
-
-    Parameters
-    ----------
-    data : ndarray of shape (nt, nx)
-        Simulated radargram matrix where:
-        - Rows represent time samples.
-        - Columns represent antenna positions along the surface (traces). 
-        
-    eps_r : float
-        Relative permittivity (dielectric) of the medium.
-
-    num_hyperbolas: int
-        Number of hyperbolas to locate. Currently onlt 1 is suported
-        
-    method : string
-        data fitting method to determine hyperbola:  NEED TO UPDATE THESE TO ACTUALLY MAKE SENSE
-        - fit_from_max : use np.polyfit on the maximum signal in each trace
-        - robust_fit : Linear least squares using the pseudoinverse
-    
-    dt : float
-        Sampling interval [s].
-    
-    dx : float
-        Spatial sampling interval (antenna step size) [m].
-
-    Returns
-    -------
-    v : velocity model in m/s
-    z : reflector depth in m
-    x0 : zero-offset trace
-    t0 : one-way travel time of the reflector at depth z
-
-"""
-
 def smooth_path_dp(data, dx, lam):
     """
     Dynamic programming path extraction with slope smoothness constraint.
@@ -338,6 +301,7 @@ def smooth_path_dp(data, dx, lam):
             best_prev = np.argmax(penalties)
             C[t, x] = data[t, x] + penalties[best_prev]
             backtrack[t, x] = best_prev
+
     # Backtrack the best path
     path = np.zeros(nx, dtype=int)
     path[-1] = np.argmax(C[:, -1])
@@ -345,6 +309,7 @@ def smooth_path_dp(data, dx, lam):
         path[x] = backtrack[path[x+1], x+1]
 
     return np.arange(0, nx), -path, C, backtrack
+
 
 def visualize_preconditioning():
     fig, ax = plt.subplots(3, 3, figsize=(18,15))
@@ -386,8 +351,31 @@ def visualize_preconditioning():
     
         im2 = ax[i][2].imshow((c-c.min(axis=0))/(c.max(axis=0)-c.min(axis=0)), aspect='auto')
         ax[i][2].set_title("Normalized Score Matrix (memoized cost method \n -- accounting for slope and intensity)")
+
+'''
+"Finding an viable set of points for hyperbola fitting can be done by hand mapping reflectors on a radargram or automatically using algorithms"
+
+arameters
+    ----------
+    data : np.ndarray of shape (nt, nx)
+        2D array representing the signal intensity field. Each column corresponds
+        to a spatial or temporal "trace", and each row represents a vertical or
+        temporal sample (e.g., depth or time). The algorithm finds a continuous
+        high-intensity ridge across columns.
     
-def fit_hyperbola(data, num_hyperbolas, method, dx, dt):
+    method : string
+        use pinv or np.polyfit. When pinv returns an error, np.polyfit becomes the default. The polyfit reduces the problem to a simpler liear form
+
+    Returns
+    -------
+    v : needs comenting
+    
+    z : needs comenting
+    
+    x0 : needs comenting
+    
+'''
+def fit_hyperbola(data, num_hyperbolas, method, dx, dt, x, t):
     if method not in ['fit_from_max', 'faster_fit', 'robust_fit']:
         raise Exception(f'{method} not an allowed method')
 
@@ -407,7 +395,9 @@ def fit_hyperbola(data, num_hyperbolas, method, dx, dt):
         t_term = t_points**2
         # fit y = mx + b, x = x_offset
         slope, int = np.polyfit(x_offset_term, t_term, 1)  # returns slope, intercept
-        
+
+        if slope <0:
+            return 0, 0, 0, 0
         v = 2.0 / np.sqrt(slope)      # subsurface velocity (m/s)
         z = v * np.sqrt(int) / 2.0    # depth (m)
         
@@ -416,9 +406,6 @@ def fit_hyperbola(data, num_hyperbolas, method, dx, dt):
         
     # Actually better than np.polyfit for noisy data
     if method=='robust_fit':
-        # Just take the max, if some are wrong due to noise our alg will work it out
-        x, t, c, b = smooth_path_dp(data, dx, lam=0.001)
-
         # Our linearized form of the hyperbola equation
         A = np.column_stack([t**2, 2.0*x, -1.0*np.ones_like(x)])
         b = x**2
@@ -434,7 +421,7 @@ def fit_hyperbola(data, num_hyperbolas, method, dx, dt):
         
         if alpha < 0 or (gamma - beta**2) < 0:
             print(Fore.RED + "Caught invalud value in sqrt: can not calculate hyperbola parameters from pinv. Switching to np.polyfit to avoid distruption. If np.polyfit quits, the input data may be too noisy")
-            return fit_hyperbola(c, num_hyperbolas, 'fit_from_max', dx, dt)
+            return fit_hyperbola(c, num_hyperbolas, 'fit_from_max', dx, dt, x, t)
         else:
             v = 2.0 * np.sqrt(alpha) * 1e9
             x0 = beta

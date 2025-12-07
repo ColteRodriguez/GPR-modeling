@@ -2,7 +2,31 @@ import numpy as np
 import math
 import matplotlib.pyplot as plt
 from colorama import Fore
+import scipy
 
+def colored_noise_ar1(N, rho, scale=0.2):
+    """Generate temporally correlated (AR1) noise."""
+    noise = np.random.randn(N)
+    for i in range(1, N):
+        noise[i] = rho * noise[i-1] + np.sqrt(1-rho**2) * noise[i]
+    return noise * scale
+
+def spatial_noise(nx, nt, strength):
+    """Low-frequency banding across traces."""
+    vertical = np.random.randn(nt)
+    vertical = scipy.ndimage.gaussian_filter1d(vertical, sigma=20)
+    return np.tile(vertical[:,None], (1,nx)) * strength
+
+def norm2d(array):
+    min_val = np.min(array)
+    max_val = np.max(array)
+    
+    # Apply the normalization formula
+    normalized_array = 2 * ((array - min_val) / (max_val - min_val)) - 1
+    
+    return normalized_array
+
+    
 def gprsim(eps_r, rf, dt, dx, reflectors, region_shape, wavetype, SNR):
     """
     Simulates a Ground Penetrating Radar (GPR) radargram for a given subsurface model.
@@ -67,7 +91,7 @@ def gprsim(eps_r, rf, dt, dx, reflectors, region_shape, wavetype, SNR):
     global c 
     c = 3e8
     v = c / np.sqrt(eps_r)
-    
+
     xlen, tlen = region_shape # Physical extent in two dimension, in units of [m] and [t]
 
     # Antenna positions along surface
@@ -78,7 +102,7 @@ def gprsim(eps_r, rf, dt, dx, reflectors, region_shape, wavetype, SNR):
     t_samples = np.arange(0, tlen, dt)
     nt = len(t_samples) # The number of scans taken
         
-    data = np.zeros((nx, nt))
+    data = np.zeros((nx, nt))      
     for j, x_ant in enumerate(x_positions):
         for (xr, zr) in reflectors:
             (xr, zr_m) = (xr, zr*v) # zr in [s], conv. to [m] to get twt
@@ -93,16 +117,51 @@ def gprsim(eps_r, rf, dt, dx, reflectors, region_shape, wavetype, SNR):
                     data[j, it] = 1
                 elif wavetype == "gaussian":
                     wavelet = np.exp(-(((t_samples - twt)) ** 2) * (rf**2))
-                    data[j, :] += wavelet
-                
-                if SNR != math.inf:
-                    # Gaussian noise with mean 0 and variance 1
-                    noise = np.random.randn(nt)
-                    noise = noise * np.std(data[j, :])/np.sqrt(SNR)
-                    data[j,:]+=noise
-            
-    return data.T, x_positions, t_samples
+                    omega0 = 2*np.pi*rf    # central frequency: 30 MHz (choose any)
+                    sigma = 20e-9
+                    morlet = np.exp(1j * omega0 * (t_samples - twt)) \
+                             * np.exp(-(t_samples - twt)**2 / (2*sigma**2))
+                    wavelet = morlet.real
+                    wavelet /= np.max(np.abs(wavelet))   # important!
+                    data[j,:] += wavelet
 
+            # Only add noise once per trace
+            if SNR != math.inf:
+                # temporally correlated noise
+                noise = colored_noise_ar1(nt, rho=0.9)
+                
+                # scale to match SNR
+                noise *= np.std(data[j,:]) / np.sqrt(SNR)
+            
+                data[j,:] += noise
+                
+    if SNR != math.inf:
+        data = data.T  # convert to [time, trace] first if needed
+        spatial = spatial_noise(nx, nt, strength=1.5)
+        data += spatial
+        data = data.T
+
+    return norm2d(data.T), x_positions, t_samples
+
+def dipping_reflector(p1, p2):
+    '''
+    Generate a dipping reflector. Assumes dx == 1. Function should be updated to accound for dx, dt this way we don't have a buch of wasted overlapping dipping reflectors. The result should not 
+    change with gprsim though bc that checks at each trace for reflectors
+    '''
+    dx = p2[0] - p1[0]
+    dy = p2[1] - p1[1]
+    slope = dy / dx
+
+    # Build reflector line from p1 → p2
+    line = []
+    for x_offset in range(dx + 1):
+        x = p1[0] + x_offset
+        y = p1[1] + slope * x_offset
+        line.append((x, y))
+
+    return line
+
+    
 
 def NMO_correction(data, eps_r, t_0, x_0, region_shape, dx, dt):
     """
@@ -310,7 +369,7 @@ def smooth_path_dp(data, dx, lam):
 
     return np.arange(0, nx), -path, C, backtrack
 
-
+# I don't really like this method. Is it a unit test? I think it should be trashed personally
 def visualize_preconditioning():
     fig, ax = plt.subplots(3, 3, figsize=(18,15))
     
@@ -352,30 +411,31 @@ def visualize_preconditioning():
         im2 = ax[i][2].imshow((c-c.min(axis=0))/(c.max(axis=0)-c.min(axis=0)), aspect='auto')
         ax[i][2].set_title("Normalized Score Matrix (memoized cost method \n -- accounting for slope and intensity)")
 
-'''
-"Finding an viable set of points for hyperbola fitting can be done by hand mapping reflectors on a radargram or automatically using algorithms"
 
-arameters
-    ----------
-    data : np.ndarray of shape (nt, nx)
-        2D array representing the signal intensity field. Each column corresponds
-        to a spatial or temporal "trace", and each row represents a vertical or
-        temporal sample (e.g., depth or time). The algorithm finds a continuous
-        high-intensity ridge across columns.
-    
-    method : string
-        use pinv or np.polyfit. When pinv returns an error, np.polyfit becomes the default. The polyfit reduces the problem to a simpler liear form
-
-    Returns
-    -------
-    v : needs comenting
-    
-    z : needs comenting
-    
-    x0 : needs comenting
-    
-'''
 def fit_hyperbola(data, num_hyperbolas, method, dx, dt, x, t):
+    '''
+    "Finding an viable set of points for hyperbola fitting can be done by hand mapping reflectors on a radargram or automatically using algorithms"
+    
+    arameters
+        ----------
+        data : np.ndarray of shape (nt, nx)
+            2D array representing the signal intensity field. Each column corresponds
+            to a spatial or temporal "trace", and each row represents a vertical or
+            temporal sample (e.g., depth or time). The algorithm finds a continuous
+            high-intensity ridge across columns.
+        
+        method : string
+            use pinv or np.polyfit. When pinv returns an error, np.polyfit becomes the default. The polyfit reduces the problem to a simpler liear form
+    
+        Returns
+        -------
+        v : needs comenting
+        
+        z : needs comenting
+        
+        x0 : needs comenting
+        
+    '''
     if method not in ['fit_from_max', 'faster_fit', 'robust_fit']:
         raise Exception(f'{method} not an allowed method')
 
@@ -451,3 +511,4 @@ def minimize_tracewise_slope_greedy(data, n_candidates, dx):
                 t[i]=cand
                 min_slope = slope
     return x, t
+

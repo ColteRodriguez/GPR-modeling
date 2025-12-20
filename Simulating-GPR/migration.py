@@ -1,4 +1,9 @@
-def Kichhoff(data, eps_r, Tlim, Nt, t_samples, x_positions)
+from __future__ import print_function
+import math
+import numpy as np
+import pdb, traceback
+
+def Kichhoff(data, eps_r, Tlim, Nt, t_samples, x_positions):
     # --- Velocity model (constant) ---
     c0 = 3e8
     v = c0 / np.sqrt(eps_r)
@@ -83,11 +88,6 @@ A reproduction of mig_fk.py in https://github.com/njwilson23/irlib.git. The prea
 #        other for-profit organization is expressly forbidden.
 #
 #
-
-from __future__ import print_function
-import math
-import numpy as np
-import pdb, traceback
 
 def csinci():
     """ Complex valued sinc function interpolation.

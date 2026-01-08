@@ -28,7 +28,6 @@ GPR-modeling/
 ├── README.md
 └── .gitignore
 
-
 ---
 
 ## Overview
@@ -44,12 +43,13 @@ The repository is split into two main components:
 - Background removal
 - Energy equalization
 - Pre-stitch preprocessing of radar traces
+- post-processing migation algorithms
 
 These tools are intended to be modular and imported into notebooks or scripts.
 
 ### 2. Simulating-GPR (Modeling & Analysis)
 
-`Simulating-GPR/` contains scripts and notebooks for:
+`Simulating-GPR/` contains scripts for:
 
 - Forward simulation of GPR wave propagation
 - Exploring synthetic radargrams

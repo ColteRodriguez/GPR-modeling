@@ -10,15 +10,13 @@ Pre-preprocessing (B-scan allignment and trimming) operations library for GPR pr
 '''
 
 
-observable_depth_ns = 1400
-
 '''
 1. remove excess depth
 238ns sampling window is way too long to return signal past 800 pixels
 '''
-def depth_correction(arr):
-    cut_pixels = int((6000/15000) * observable_depth_ns) # px/ns * ns
-    return observable_depth_ns, arr[:cut_pixels, :]
+def depth_correction(arr, conversion, observable_depth_ns):
+    cut_pixels = conversion * observable_depth_ns # px/ns * ns
+    return observable_depth_ns, arr[:int(cut_pixels), :]
 
 '''
 2. Self detection removal

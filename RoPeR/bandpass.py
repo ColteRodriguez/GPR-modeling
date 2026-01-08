@@ -4,7 +4,7 @@ from scipy.fft import fft, ifft, fftfreq
 '''
 7. Band-pass filtering
 '''
-def bandpass_filter(trace, dt, low_f=0.45e9, high_f=2.15e9):
+def bandpass_filter(trace, dt, low_f, high_f):
     n = len(trace)
     freqs = fftfreq(n, dt)
     fft_trace = fft(trace)

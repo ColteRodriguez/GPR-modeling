@@ -1,15 +1,12 @@
-# myproject/__init__.py
 from importlib.metadata import version
 
 REQUIRED = {
-    "numpy": "2.2.6",
+    "pds4_tools": "1.4",
+    "numpy": "1.26.4",
+    "pds4_tools": "1.4",
     "scipy": "1.15.3",
     "matplotlib": "3.10.7"
 }
-
-def resolve_dependency_conf():
-    print("installing ___")
-    # Installation code here
 
 def check_dependencies():
     problems = []
@@ -24,11 +21,6 @@ def check_dependencies():
     if problems:
         msg = "Dependency version mismatch:\n" + "\n".join(problems)
         print(f"import Error: {msg}")
-        should_resolve = input("would you like to proceed with installing the correct versions? (Y/N)")
-        if should_resolve == "Y":
-            resolve_dependency_conf()
-        else:
-            print("Process exited without resolving conflicts")
 
 check_dependencies()
 

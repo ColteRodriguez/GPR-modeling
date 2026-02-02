@@ -2,6 +2,7 @@ from __future__ import print_function
 import math
 import numpy as np
 import pdb, traceback
+import scipy
 
 def Kichhoff(data, eps_r, Tlim, Nt, t_samples, x_positions):
     # --- Velocity model (constant) ---
@@ -30,7 +31,7 @@ def Kichhoff(data, eps_r, Tlim, Nt, t_samples, x_positions):
             # Interpolate each trace’s data at time T
             amplitudes = np.zeros_like(T)
             for isrc in np.where(valid)[0]:
-                f = interp1d(t_samples, data[:, isrc], kind='linear', fill_value=0, bounds_error=False)
+                f = scipy.interpolate.interp1d(t_samples, data[:, isrc], kind='linear', fill_value=0, bounds_error=False)
                 amplitudes[isrc] = f(T[isrc])
     
             # Sum contributions (simplest Kirchhoff)

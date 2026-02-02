@@ -27,7 +27,7 @@ def norm2d(array):
     return normalized_array
 
     
-def gprsim(eps_r, rf, dt, dx, reflectors, region_shape, wavetype, SNR):
+def gprsim(eps_r, rf, dt, dx, reflectors, region_shape, wavetype, SNR, long_reflectors):
     """
     Simulates a Ground Penetrating Radar (GPR) radargram for a given subsurface model.
 
@@ -102,8 +102,26 @@ def gprsim(eps_r, rf, dt, dx, reflectors, region_shape, wavetype, SNR):
     t_samples = np.arange(0, tlen, dt)
     nt = len(t_samples) # The number of scans taken
         
-    data = np.zeros((nx, nt))      
-    for j, x_ant in enumerate(x_positions):
+    data = np.zeros((nx, nt))  
+
+    for ref in long_reflectors:
+        for (xr, zr) in ref:
+            twt = zr
+            it = int(np.round(twt / dt))
+            if 0 <= it < nt:
+                if wavetype == "spike":
+                    data[j, it] = 1
+                elif wavetype == "gaussian":
+                    wavelet = np.exp(-(((t_samples - twt)) ** 2) * (rf**2))
+                    omega0 = 2*np.pi*rf    # central frequency: 30 MHz (choose any)
+                    sigma = 22e-9
+                    morlet = np.exp(1j * omega0 * (t_samples - twt)) \
+                             * np.exp(-(t_samples - twt)**2 / (2*sigma**2))
+                    wavelet = morlet.real
+                    wavelet /= np.max(np.abs(wavelet))   # important!
+                    data[int(xr),:] += wavelet
+            
+    for j, x_ant in enumerate(x_positions):        
         for (xr, zr) in reflectors:
             (xr, zr_m) = (xr, zr*v) # zr in [s], conv. to [m] to get twt
             
@@ -123,21 +141,25 @@ def gprsim(eps_r, rf, dt, dx, reflectors, region_shape, wavetype, SNR):
                              * np.exp(-(t_samples - twt)**2 / (2*sigma**2))
                     wavelet = morlet.real
                     wavelet /= np.max(np.abs(wavelet))   # important!
-                    data[j,:] += wavelet
+                    aten = np.exp(-((x_ant - xr)**2) / (2 * 13**2)) # add the full wavelet when we're under the reflector, atenuate with dist
+                    # 2 should be replaced with a depth-frequency relation
+                    data[j,:] += wavelet * aten
 
-            # Only add noise once per trace
-            if SNR != math.inf:
-                # temporally correlated noise
-                noise = colored_noise_ar1(nt, rho=0.9)
-                
-                # scale to match SNR
-                noise *= np.std(data[j,:]) / np.sqrt(SNR)
+        # Only add noise once per trace
+        if SNR != math.inf:
+            # temporally correlated noise
+            noise = colored_noise_ar1(nt, rho=0.9)
             
-                data[j,:] += noise
+            # scale to match SNR
+            noise *= np.std(data[j,:]) / np.sqrt(SNR)
+        
+            data[j,:] += noise
+
+
                 
     if SNR != math.inf:
         data = data.T  # convert to [time, trace] first if needed
-        spatial = spatial_noise(nx, nt, strength=1.5)
+        spatial = spatial_noise(nx, nt, strength=0.5)
         data += spatial
         data = data.T
 
@@ -479,7 +501,7 @@ def fit_hyperbola(data, num_hyperbolas, method, dx, dt, x, t):
         consts2 = np.linalg.pinv(A[mask]) @ b[mask]
         alpha, beta, gamma = consts2
         
-        if alpha < -100000:
+        if alpha is 'abc123':
             print(Fore.RED + "Caught invalud value in sqrt: can not calculate hyperbola parameters from pinv. Switching to np.polyfit to avoid distruption. If np.polyfit quits, the input data may be too noisy")
             return fit_hyperbola(c, num_hyperbolas, 'fit_from_max', dx, dt, x, t)
         else:

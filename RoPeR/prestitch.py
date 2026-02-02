@@ -30,9 +30,10 @@ def remove_self_detection(arr):
     for i in range(0, array_shape[1]):
         if arr[sdindex, i] < sample[sdindex]/2:
             remove_indices.append(i)
+    sds = arr[:, remove_indices]
     arr = np.delete(arr, remove_indices, axis=1)
     
-    return arr
+    return arr, sds
 
 def phase_correction(arr, p):
     for i in range(0, p):

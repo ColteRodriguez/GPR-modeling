@@ -3,167 +3,46 @@ import math
 import matplotlib.pyplot as plt
 from colorama import Fore
 import scipy
+from bruges.filters.wavelets import ricker
 
-def colored_noise_ar1(N, rho, scale=0.2):
-    """Generate temporally correlated (AR1) noise."""
-    noise = np.random.randn(N)
-    for i in range(1, N):
-        noise[i] = rho * noise[i-1] + np.sqrt(1-rho**2) * noise[i]
-    return noise * scale
-
-def spatial_noise(nx, nt, strength):
-    """Low-frequency banding across traces."""
-    vertical = np.random.randn(nt)
-    vertical = scipy.ndimage.gaussian_filter1d(vertical, sigma=20)
-    return np.tile(vertical[:,None], (1,nx)) * strength
-
-def norm2d(array):
-    min_val = np.min(array)
-    max_val = np.max(array)
-    
-    # Apply the normalization formula
-    normalized_array = 2 * ((array - min_val) / (max_val - min_val)) - 1
-    
-    return normalized_array
-
-    
-def gprsim(eps_r, rf, dt, dx, reflectors, region_shape, wavetype, SNR, long_reflectors):
-    """
-    Simulates a Ground Penetrating Radar (GPR) radargram for a given subsurface model.
-
-    This function generates synthetic GPR data by modeling wave propagation 
-    from a surface antenna to one or more point reflectors in a homogeneous medium 
-    characterized by a specified relative permittivity. The resulting radargram 
-    shows the time-domain reflection response as a function of antenna position.
-
-    Parameters
-    ----------
-    eps_r : float
-        Relative permittivity (dielectric) of the medium.
-    
-    rf : float
-        Frequency parameter controlling the Gaussian wavelet width.
-        Larger values produce narrower, higher-frequency pulses.
-    
-    dt : float
-        Sampling interval [s].
-    
-    dx : float
-        Spatial sampling interval (antenna step size) [m].
-    
-    reflectors : list of tuple(float, float)
-        List of subsurface reflector coordinates, each given as (x, z).
-        - x : horizontal position of reflector [m] (relative to region_shape[0]).
-        - z : depth (two-way travel time) [s].
-    
-    region_shape : tuple(float, float)
-        Physical extent of the simulated region, (xlen, tlen):
-        - xlen : total horizontal distance [m].
-        - tlen : total recording time window [s].
-    
-    wavetype : {'spike', 'gaussian'}
-        Type of source wavelet used to simulate reflections.
-        - 'spike'    : ideal impulse response.
-        - 'gaussian' : Gaussian-modulated waveform controlled by `rf`.
-    
-    SNR : float
-        Signal-to-noise ratio. Controls the intensity of additive Gaussian noise.
-        If `math.inf`, no noise is added.
-
-    Returns
-    -------
-    data : ndarray of shape (nt, nx)
-        Simulated radargram matrix where:
-        - Rows represent time samples.
-        - Columns represent antenna positions along the surface (traces).
-    
-    x_positions : ndarray of shape (nx,)
-        Horizontal positions of antenna along the surface [m].
-    
-    t_samples : ndarray of shape (nt,)
-        Time samples corresponding to rows in `data` [s].
-
-    """
-
-    if wavetype not in ['spike', 'gaussian']:
-        raise Exception(f'{wavetype} not an allowed wavetype.')
-        
-    global c 
+def gprsim(eps_r, rf, dt, dx, reflectors, region_shape, wavetype, SNR):
     c = 3e8
     v = c / np.sqrt(eps_r)
 
-    xlen, tlen = region_shape # Physical extent in two dimension, in units of [m] and [t]
-
-    # Antenna positions along surface
+    # Physical extent: xlen [m], tlen [s]
+    xlen, tlen = region_shape
+  
+    # Spatial and time sampling
     x_positions = np.arange(0, xlen, dx)
-    nx = len(x_positions) # The number of scans taken
+    nx = len(x_positions)
 
-    # Time axis, max penetration depth in ns
     t_samples = np.arange(0, tlen, dt)
-    nt = len(t_samples) # The number of scans taken
-        
-    data = np.zeros((nx, nt))  
+    nt = len(t_samples)
+    
+    print(f"total x meters: {xlen}, total t depth: {tlen}, Numbler of x steps (scans): {nx}, how many samples in time domain: {nt}")
 
-    for ref in long_reflectors:
-        for (xr, zr) in ref:
-            twt = zr
-            it = int(np.round(twt / dt))
-            if 0 <= it < nt:
-                if wavetype == "spike":
-                    data[j, it] = 1
-                elif wavetype == "gaussian":
-                    wavelet = np.exp(-(((t_samples - twt)) ** 2) * (rf**2))
-                    omega0 = 2*np.pi*rf    # central frequency: 30 MHz (choose any)
-                    sigma = 22e-9
-                    morlet = np.exp(1j * omega0 * (t_samples - twt)) \
-                             * np.exp(-(t_samples - twt)**2 / (2*sigma**2))
-                    wavelet = morlet.real
-                    wavelet /= np.max(np.abs(wavelet))   # important!
-                    data[int(xr),:] += wavelet
-            
-    for j, x_ant in enumerate(x_positions):        
+    data = np.zeros((nx, nt))
+
+    for j, x_ant in enumerate(x_positions):
         for (xr, zr) in reflectors:
-            (xr, zr_m) = (xr, zr*v) # zr in [s], conv. to [m] to get twt
-            
-            # calculate the twt from the xr to x_ant
-            twt = 2 * (np.sqrt((xr - x_ant) ** 2 + zr_m ** 2)/v) # Must convert reflector position to vel est. position [units of s]
-            it = int(np.round(twt / dt)) # Convert travel time to nearest sample index
-            
-            # # Insert a simple spike (or Gaussian wavelet)
+            # Calculate two-way travel time
+            twt = 2 * np.sqrt((xr - x_ant)**2 + zr**2) / v
+            it = int(np.round(twt / dt))
+                        
             if 0 <= it < nt:
                 if wavetype == "spike":
                     data[j, it] = 1
                 elif wavetype == "gaussian":
-                    wavelet = np.exp(-(((t_samples - twt)) ** 2) * (rf**2))
-                    omega0 = 2*np.pi*rf    # central frequency: 30 MHz (choose any)
-                    sigma = 22e-9
-                    morlet = np.exp(1j * omega0 * (t_samples - twt)) \
-                             * np.exp(-(t_samples - twt)**2 / (2*sigma**2))
-                    wavelet = morlet.real
-                    wavelet /= np.max(np.abs(wavelet))   # important!
-                    aten = np.exp(-((x_ant - xr)**2) / (2 * 13**2)) # add the full wavelet when we're under the reflector, atenuate with dist
-                    # 2 should be replaced with a depth-frequency relation
-                    data[j,:] += wavelet * aten
+                    wavelet = np.exp(-((t_samples - twt)**2) * (rf**2))
+                    data[j, :] += wavelet
 
-        # Only add noise once per trace
+        # Add noise per trace
         if SNR != math.inf:
-            # temporally correlated noise
-            noise = colored_noise_ar1(nt, rho=0.9)
-            
-            # scale to match SNR
-            noise *= np.std(data[j,:]) / np.sqrt(SNR)
-        
-            data[j,:] += noise
+            noise = np.random.randn(nt)
+            noise *= np.std(data[j, :]) / np.sqrt(SNR)
+            data[j, :] += noise
 
-
-                
-    if SNR != math.inf:
-        data = data.T  # convert to [time, trace] first if needed
-        spatial = spatial_noise(nx, nt, strength=0.5)
-        data += spatial
-        data = data.T
-
-    return norm2d(data.T), x_positions, t_samples
+    return data, x_positions, t_samples
 
 def dipping_reflector(p1, p2):
     '''
@@ -221,6 +100,7 @@ def NMO_correction(data, eps_r, t_0, x_0, region_shape, dx, dt):
         - Columns represent antenna positions along the surface (traces).
 
     """
+    c = 3e8
     v = (c/np.sqrt(eps_r))/1e9         # [ns]
     
     NMO_corrected_data = np.zeros_like(data)
@@ -532,3 +412,112 @@ def minimize_tracewise_slope_greedy(data, n_candidates, dx):
                 min_slope = slope
     return x, t
 
+
+def gpr_finite_difference_abc(
+    eps_model,
+    dx,
+    dz,
+    dt,
+    t_max,
+    f0,
+    trace_spacing,
+    SNR
+):
+    c0 = 3e8
+    lambda_min = (c0 / np.sqrt(np.max(eps_model))) / f0
+    points_per_wavelength = lambda_min / dx
+    print(f"Points per wavelength: {points_per_wavelength:.1f}")
+
+    nx, nz = eps_model.shape
+    velocity = c0 / np.sqrt(eps_model)
+
+    nt = int(t_max / dt)
+    t = np.arange(nt) * dt
+
+    # CFL check
+    vmax = np.max(velocity)
+    if vmax * dt * np.sqrt(1/dx**2 + 1/dz**2) >= 1:
+        raise ValueError("CFL unstable — reduce dt.")
+
+    # Source wavelet (generate once)
+    w, _ = ricker(duration=1.5 / f0, dt=dt, f=f0)
+    w /= np.max(np.abs(w))
+
+    # Shot positions (grid indices)
+    positions = np.arange(0, nx, trace_spacing)
+
+    traces = []
+
+    print(positions, nt)
+    for x_pos in positions:
+
+        # reset wavefields
+        u_prev = np.zeros((nx, nz))
+        u = np.zeros((nx, nz))
+        u_next = np.zeros((nx, nz))
+
+        trace = np.zeros(nt)
+
+        for it in range(nt):
+
+            # compute Laplacian only on interior
+            lap = np.zeros_like(u)
+            lap[1:-1,1:-1] = (
+                (u[2:,1:-1] - 2*u[1:-1,1:-1] + u[:-2,1:-1]) / dx**2 +
+                (u[1:-1,2:] - 2*u[1:-1,1:-1] + u[1:-1,:-2]) / dz**2
+            )
+
+            # time update
+            u_next = 2*u - u_prev + velocity**2 * dt**2 * lap
+            u_next *= 0.999
+            # inject source at current position
+            if it < len(w):
+                u_next[x_pos, 1] += w[it]
+
+            # absorbing boundaries
+            r_x = velocity * dt / dx
+            r_z = velocity * dt / dz
+
+            # left
+            u_next[0,:] = (
+                u[1,:] +
+                (r_x[0,:]-1)/(r_x[0,:]+1) *
+                (u_next[1,:] - u[0,:])
+            )
+
+            # right
+            u_next[-1,:] = (
+                u[-2,:] +
+                (r_x[-1,:]-1)/(r_x[-1,:]+1) *
+                (u_next[-2,:] - u[-1,:])
+            )
+            # # TOP (add this!)
+            # u_next[:,0] = (
+            #     u[:,1] +
+            #     (r_z[:,0]-1)/(r_z[:,0]+1) *
+            #     (u_next[:,1] - u[:,0])
+            # )
+
+            # bottom
+            u_next[:,-1] = (
+                u[:,-2] +
+                (r_z[:,-1]-1)/(r_z[:,-1]+1) *
+                (u_next[:,-2] - u[:,-1])
+            )
+
+            # record monostatic trace
+            trace[it] = u_next[x_pos, 1]
+
+            u_prev, u = u, u_next.copy()
+
+        # add noise per trace
+        if SNR != np.inf:
+            noise = np.random.randn(nt)
+            noise *= np.std(trace) / np.sqrt(SNR)
+            trace += noise
+
+        traces.append(trace)
+
+    radargram = np.array(traces).T  # shape (nt, n_traces)
+
+    return radargram, positions * dx, t

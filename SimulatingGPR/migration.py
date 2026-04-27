@@ -5,21 +5,17 @@ import pdb, traceback
 import scipy
 
 def Kichhoff(data, eps_r, Tlim, Nt, t_samples, x_positions):
-    # --- Velocity model (constant) ---
+    # Velocity model (constant)
     c0 = 3e8
     v = c0 / np.sqrt(eps_r)
     
-    # --- Output migration grid ---
+    # Output migration grid 
     x_img = x_positions.copy()       # same as input x
     z_img = np.linspace(0, v*Tlim/2, Nt) # converting time window to max depth: z_max = v * t_max / 2
-    
     migrated = np.zeros((len(x_img), len(z_img)))
     
-    # --- Migration Loop ---
     for ix, x in enumerate(x_img):
         for iz, z in enumerate(z_img):
-    
-            # Travel time curve T(x_s; x,z) for all traces
             # Two-way travel time in constant velocity
             T = 2.0 * np.sqrt((x_positions - x)**2 + z**2) / v
     
@@ -37,57 +33,6 @@ def Kichhoff(data, eps_r, Tlim, Nt, t_samples, x_positions):
             # Sum contributions (simplest Kirchhoff)
             migrated[ix, iz] = np.sum(amplitudes)
            
-    return migrated, z_img
-
-def Kirchhoff_fullfield(data, eps_r, Tlim, Nt, t_samples, x_positions):
-    c0 = 3e8
-    
-    # Handle scalar or array velocity
-    if np.isscalar(eps_r):
-        # Original constant velocity case
-        v = c0 / np.sqrt(eps_r)
-        v_array = None
-    else:
-        # Variable velocity case
-        v = c0 / np.sqrt(np.max(eps_r))  # Use max velocity for depth axis
-        v_array = c0 / np.sqrt(eps_r)     # Store full velocity field
-    
-    # --- Output migration grid ---
-    x_img = x_positions.copy()
-    z_img = np.linspace(0, v*Tlim/2, Nt)
-    
-    # Resize velocity array if needed
-    if v_array is not None and v_array.shape != (len(x_img), len(z_img)):
-        from scipy.ndimage import zoom
-        zoom_factors = (len(x_img) / v_array.shape[0], len(z_img) / v_array.shape[1])
-        v_array = zoom(v_array, zoom_factors, order=1)
-    
-    migrated = np.zeros((len(x_img), len(z_img)))
-    
-    # --- Migration Loop ---
-    for ix, x in enumerate(x_img):
-        for iz, z in enumerate(z_img):
-            
-            # Get velocity at this image point
-            v_local = v_array[ix, iz] if v_array is not None else v
-            
-            # Travel time using local velocity
-            T = 2.0 * np.sqrt((x_positions - x)**2 + z**2) / v_local
-            
-            # Only use times inside the data window
-            valid = (T >= t_samples[0]) & (T <= t_samples[-1])
-            if not np.any(valid):
-                continue
-            
-            # Interpolate each trace's data at time T
-            amplitudes = np.zeros_like(T)
-            for isrc in np.where(valid)[0]:
-                f = scipy.interpolate.interp1d(t_samples, data[:, isrc], kind='linear', fill_value=0, bounds_error=False)
-                amplitudes[isrc] = f(T[isrc])
-            
-            # Sum contributions (simplest Kirchhoff)
-            migrated[ix, iz] = np.sum(amplitudes)
-    
     return migrated, z_img
 
 
@@ -516,15 +461,17 @@ def fkmig(D, dt, dx, v, params=None):
     return Dmig, tmig, xmig
 
 
+'''
+Very similar to the FDTD sim in gprsim.py
+'''
 def gpr_rtm(radargram, shot_positions, velocity_model, dx, dz, dt, source_wavelet):
-    
+     
     nt, n_shots = radargram.shape
     nx, nz = velocity_model.shape
     
     # Convert shot positions from meters to grid indices
     shot_indices = np.round(shot_positions / dx).astype(int)
     
-    # Initialize image
     image = np.zeros((nx, nz))
     
     # Imaging condition accumulator
@@ -532,63 +479,59 @@ def gpr_rtm(radargram, shot_positions, velocity_model, dx, dz, dt, source_wavele
     
     for shot_idx, x_pos in enumerate(shot_indices):
 
-        # === FORWARD PROPAGATION (source wavefield) ===
+        # Foreward propogation of the source wavefield
         u_fwd_prev = np.zeros((nx, nz))
         u_fwd = np.zeros((nx, nz))
-        
-        # Store forward wavefield for all times
+
+        # We want to store at each timestep (oh god the computational load)
         forward_wavefield = np.zeros((nt, nx, nz))
         
         for it in range(nt):
-            # Laplacian
             lap = np.zeros_like(u_fwd)
             lap[1:-1, 1:-1] = (
                 (u_fwd[2:, 1:-1] - 2*u_fwd[1:-1, 1:-1] + u_fwd[:-2, 1:-1]) / dx**2 +
                 (u_fwd[1:-1, 2:] - 2*u_fwd[1:-1, 1:-1] + u_fwd[1:-1, :-2]) / dz**2
             )
             
-            # Time update
             u_fwd_next = 2*u_fwd - u_fwd_prev + velocity_model**2 * dt**2 * lap
+            # Note: I didn't include the small attenuation parameter here as in gpr_finite_difference_abc()
             
-            # Inject source
+            # Inject source at current position
             if it < len(source_wavelet):
                 u_fwd_next[x_pos, 1] += source_wavelet[it]
             
-            # Apply ABCs (same as forward modeling)
+            # Moved abcs to outside scope
             u_fwd_next = apply_abc(u_fwd_next, u_fwd, velocity_model, dx, dz, dt)
-            
-            # Save wavefield
+
+            # Add to the big record
             forward_wavefield[it] = u_fwd_next.copy()
             
             # Update
             u_fwd_prev, u_fwd = u_fwd, u_fwd_next
         
-        # === BACKWARD PROPAGATION (receiver wavefield) ===
+        # back propogation of the recieved wavefield
         u_bwd_prev = np.zeros((nx, nz))
         u_bwd = np.zeros((nx, nz))
         
-        # Time-reverse the recorded trace
+        # reverse the trace along the time axis
         trace_reversed = radargram[:, shot_idx][::-1]
-        
+
+        # Should move this term to another method in future?
         for it in range(nt):
-            # Laplacian
             lap = np.zeros_like(u_bwd)
             lap[1:-1, 1:-1] = (
                 (u_bwd[2:, 1:-1] - 2*u_bwd[1:-1, 1:-1] + u_bwd[:-2, 1:-1]) / dx**2 +
                 (u_bwd[1:-1, 2:] - 2*u_bwd[1:-1, 1:-1] + u_bwd[1:-1, :-2]) / dz**2
             )
-            
-            # Time update
+
+            # Its pretty much identical here. I think I'd prefer to better modularize this when I have time
             u_bwd_next = 2*u_bwd - u_bwd_prev + velocity_model**2 * dt**2 * lap
-            
-            # Inject receiver data (time-reversed)
             u_bwd_next[x_pos, 1] += trace_reversed[it]
-            
-            # Apply ABCs
             u_bwd_next = apply_abc(u_bwd_next, u_bwd, velocity_model, dx, dz, dt)
-            
-            # === IMAGING CONDITION ===
-            # Cross-correlate forward and backward wavefields
+
+
+            # Imaging Condition
+            # Cross-correlate forward and backward wavefields using the formula for distrete time sequences
             # Use time index nt-1-it to get matching forward wavefield
             image += forward_wavefield[nt-1-it] * u_bwd_next
             source_energy += forward_wavefield[nt-1-it]**2
@@ -596,7 +539,7 @@ def gpr_rtm(radargram, shot_positions, velocity_model, dx, dz, dt, source_wavele
             # Update
             u_bwd_prev, u_bwd = u_bwd, u_bwd_next
     
-    # Normalize by source energy to reduce artifacts
+    # Normalize by source energy to reduce artifacts --- Could also just apply at the end, but this ay the operation doesn't require another loop
     source_energy[source_energy < 0.01 * np.max(source_energy)] = 1  # avoid division by zero
     image /= source_energy
     
@@ -604,7 +547,6 @@ def gpr_rtm(radargram, shot_positions, velocity_model, dx, dz, dt, source_wavele
 
 
 def apply_abc(u_next, u, velocity, dx, dz, dt):
-    """Apply absorbing boundary conditions"""
     r_x = velocity * dt / dx
     r_z = velocity * dt / dz
     

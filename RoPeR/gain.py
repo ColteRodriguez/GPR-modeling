@@ -1,8 +1,7 @@
 import numpy as np
 
 '''
-6. Apply Exponential Gain for attenuation
-adjust param for desired depth and visualization
+6. Apply exponential gain for attenuation
 '''
 def apply_gain(data,  param, gain_type, agc_window):
     n_samples, n_traces = data.shape

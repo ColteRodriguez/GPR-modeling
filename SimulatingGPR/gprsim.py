@@ -5,7 +5,21 @@ from colorama import Fore
 import scipy
 from bruges.filters.wavelets import ricker
 
+'''
+- Naming convention for methods will be all lowercase with underscore (_) as spacees (camel case)
+- Naming convention for variables will be the same as for methods except in the case where mathematical naming convention takes precedentc (e.g. cases where 2d arrays act as matrices)
+- Each method will be preceeded by a breif description of the method, and code should be tracable with minimal in-line comments.
+- Quote comments should occur only as a method or document preamble, with some exceptions. Other comments should be in-line
+
+- I've tried using Claude to write method preambles. It looks professional but it just adds so much and I really think this is something that should be done by the person writing the method. I think I'll switch to just a breif descritpion after this file. At least for the purpose of submitting the thesis. I'll go back and update everything post-submission.
+'''
+
 def gprsim(eps_r, rf, dt, dx, reflectors, region_shape, wavetype, SNR):
+    '''
+    Gpr simulation using ray approximation to the wave equation
+    Assumes homogeneous medium with infinte permittivity reflectors
+    A toy for visualizing normal moveout as the Tx/Rx moves over top of a point reflector
+    '''
     c = 3e8
     v = c / np.sqrt(eps_r)
 
@@ -44,11 +58,10 @@ def gprsim(eps_r, rf, dt, dx, reflectors, region_shape, wavetype, SNR):
 
     return data, x_positions, t_samples
 
+'''
+Generate a dipping reflector. Assumes dx == 1. Function should be updated to accound for dx, dt this way we don't have a buch of wasted overlapping dipping reflectors. The result should not change with gprsim though bc that checks at each trace for reflectors
+'''
 def dipping_reflector(p1, p2):
-    '''
-    Generate a dipping reflector. Assumes dx == 1. Function should be updated to accound for dx, dt this way we don't have a buch of wasted overlapping dipping reflectors. The result should not 
-    change with gprsim though bc that checks at each trace for reflectors
-    '''
     dx = p2[0] - p1[0]
     dy = p2[1] - p1[1]
     slope = dy / dx
@@ -79,7 +92,8 @@ def NMO_correction(data, eps_r, t_0, x_0, region_shape, dx, dt):
         Relative permittivity (dielectric) of the medium.
 
     t_0, x_0 : float, int
-        Guess corrdinates of the reflector in the simulated radargram. Can be easily modified to handle multiple refelctors but this is pointless as NMO can only correct one at a time
+        Guess corrdinates of the reflector in the simulated radargram. Can be easily modified to handle multiple refelctors but 
+        this is pointless as NMO can only correct one at a time
         
     region_shape : tuple(float, float)
         Physical extent of the simulated region, (xlen, tlen):
@@ -315,83 +329,32 @@ def visualize_preconditioning():
 
 
 def fit_hyperbola(data, num_hyperbolas, method, dx, dt, x, t):
-    '''
-    "Finding an viable set of points for hyperbola fitting can be done by hand mapping reflectors on a radargram or automatically using algorithms"
+    # we want the physical coords of x, t
+    x*=dx # dx in meters per pixel
+    t*=dt # dt in **ns** per pixel
     
-    arameters
-        ----------
-        data : np.ndarray of shape (nt, nx)
-            2D array representing the signal intensity field. Each column corresponds
-            to a spatial or temporal "trace", and each row represents a vertical or
-            temporal sample (e.g., depth or time). The algorithm finds a continuous
-            high-intensity ridge across columns.
-        
-        method : string
-            use pinv or np.polyfit. When pinv returns an error, np.polyfit becomes the default. The polyfit reduces the problem to a simpler liear form
+    # Our linearized form of the hyperbola equation
+    A = np.column_stack([x**2, -2*x, 1.0*np.ones_like(x)])
+    b = t**2
     
-        Returns
-        -------
-        v : needs comenting
-        
-        z : needs comenting
-        
-        x0 : needs comenting
-        
-    '''
-    if method not in ['fit_from_max', 'faster_fit', 'robust_fit']:
-        raise Exception(f'{method} not an allowed method')
-
-    # Option one. SImple, but requires handholding (really nice input)
-    if method == 'fit_from_max': 
-        # Option 1: Lets just go through and get the time index of the highest magnitude frequency then fit a hyperbola
-        t_points = data.argmax(axis=0) * dt # [ns] --> [s]
-        x_points = np.arange(0, data.shape[1]) * dx # m
-
-        # getting these points is essential for this method -- otherwise it fails
-        apex = np.argmin(t_points)
-        x0 = x_points[apex] # [m]
-        t0 = t_points[apex]/2 # [s]
-        
-        # linear reg of t^2 vs (x-x0)^2
-        x_offset_term = (x_points - x0)**2
-        t_term = t_points**2
-        # fit y = mx + b, x = x_offset
-        slope, int = np.polyfit(x_offset_term, t_term, 1)  # returns slope, intercept
-
-        if slope <0:
-            return 0, 0, 0, 0
-        v = 2.0 / np.sqrt(slope)      # subsurface velocity (m/s)
-        z = v * np.sqrt(int) / 2.0    # depth (m)
-        
-        print(f"v = {v:.1f} m/s, depth z = {z:.2f} m, apex x0 = {x0:.3f} m, t0 = {t0} s")
-        return v, z, x0, t0
-        
-    # Actually better than np.polyfit for noisy data
-    if method=='robust_fit':
-        # Our linearized form of the hyperbola equation
-        A = np.column_stack([x**2, -2*x, 1.0*np.ones_like(x)])
-        b = t**2
-        
-        # solve with pseudoinverse -- do this twice to reduce outliers
-        consts = np.linalg.pinv(A) @ b
-        r = A@consts - b  
-        sigma = 1.5 * np.median(np.abs(r - np.median(r))) # scale mad
-        
-        mask = np.abs(r) <= 0.5 * sigma
-        consts2 = np.linalg.pinv(A[mask]) @ b[mask]
-        alpha, beta, gamma = consts2
-        
-        if alpha is 'abc123':
-            print(Fore.RED + "Caught invalud value in sqrt: can not calculate hyperbola parameters from pinv. Switching to np.polyfit to avoid distruption. If np.polyfit quits, the input data may be too noisy")
-            return fit_hyperbola(c, num_hyperbolas, 'fit_from_max', dx, dt, x, t)
-        else:
-            v = np.sqrt(1/alpha)
-            x0 = beta * v**2
-            t0 = np.sqrt(gamma-(x0**2/v**2))
-        # print(f"v = {v:.1f} m/s, depth z = {z:.2f} m, apex x0 = {x0:.3f} m, t0 = {t0} s, risiduals={r}")
-        return 2*v*1e9, x0, (t0/2)*1e-9
-
-    return None
+    # solve with pseudoinverse -- do this twice to reduce outliers
+    consts = np.linalg.pinv(A) @ b
+    r = A@consts - b  
+    sigma = 1.5 * np.median(np.abs(r - np.median(r))) # scale mad
+    
+    mask = np.abs(r) <= 0.5 * sigma
+    consts2 = np.linalg.pinv(A[mask]) @ b[mask]
+    alpha, beta, gamma = consts2
+    
+    if alpha == 'bad':
+        print(Fore.RED + "Caught invalud value in sqrt: can not calculate hyperbola parameters from pinv. Switching to np.polyfit to avoid distruption. If np.polyfit quits, the input data may be too noisy")
+        return fit_hyperbola(c, num_hyperbolas, 'fit_from_max', dx, dt, x, t)
+    else:
+        v = np.sqrt(1/alpha)
+        x0 = beta/alpha
+        t0 = np.sqrt(gamma-(x0**2/v**2))
+    # print(f"v = {v:.1f} m/s, depth z = {z:.2f} m, apex x0 = {x0:.3f} m, t0 = {t0} s, risiduals={r}")
+    return v, x0, t0
 
 def minimize_tracewise_slope_greedy(data, n_candidates, dx):
     t = data.argsort(axis=0)[::-1,:][0]
@@ -412,7 +375,9 @@ def minimize_tracewise_slope_greedy(data, n_candidates, dx):
                 min_slope = slope
     return x, t
 
-
+'''
+FDTD solution to the wave equation with absorbing boundary conditions
+'''
 def gpr_finite_difference_abc(
     eps_model,
     dx,
@@ -491,12 +456,6 @@ def gpr_finite_difference_abc(
                 (r_x[-1,:]-1)/(r_x[-1,:]+1) *
                 (u_next[-2,:] - u[-1,:])
             )
-            # # TOP (add this!)
-            # u_next[:,0] = (
-            #     u[:,1] +
-            #     (r_z[:,0]-1)/(r_z[:,0]+1) *
-            #     (u_next[:,1] - u[:,0])
-            # )
 
             # bottom
             u_next[:,-1] = (

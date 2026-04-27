@@ -3,7 +3,7 @@ import numpy as np
 '''
 Background operations library for GPR processing used in Rodriguez, 2026 senior thesis. 
 
-- Naming convention for methods will be all lowercase with underscore (_) as spacees
+- Naming convention for methods will be all lowercase with underscore (_) as spacees (camel case)
 - Naming convention for variables will be the same as for methods except in the case where mathematical naming convention takes precedentc (e.g. cases where 2d arrays act as matrices)
 - Each method will be preceeded by a breif description of the method, and code should be tracable with minimal in-line comments.
 '''

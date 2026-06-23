@@ -2,33 +2,11 @@
 
 This repository contains a collection of Python scripts and notebooks for **simulating, processing, and analyzing Ground Penetrating Radar (GPR) data**. The project combines basic GPR forward modeling with common processing steps (filtering, gain, background removal) and exploratory analysis tools such as migration and hyperbola fitting.
 
-This codebase is **research-oriented and exploratory** rather than a polished software package.
+
 
 ---
 
 ## Project Structure
-
-GPR-modeling/
-│
-├── RoPeR/
-│ ├── bandpass.py # Bandpass filtering for GPR traces
-│ ├── gain.py # Gain functions for amplitude correction
-│ ├── bgr.py # Background removal routines
-│ ├── energy_eq.py # Energy equalization utilities
-│ ├── prestitch.py # Preprocessing / trace stitching tools
-│ └── init.py
-│
-├── Simulating-GPR/
-│ ├── gprsim.py # GPR forward simulation code
-│ ├── migration.py # Migration routines for GPR data
-│ ├── Hyperbola_Fitting.ipynb
-│ ├── gprsim.ipynb
-│ └── temp.ipynb
-│
-├── README.md
-└── .gitignore
-
----
 
 ## Overview
 
